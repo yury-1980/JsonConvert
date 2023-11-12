@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @AllArgsConstructor
@@ -13,4 +15,6 @@ public class MyTipe {
 
     private String name;
     private Integer age;
+    private List<Integer> list;
+//    private HashMap<String,Integer> map;
 }
