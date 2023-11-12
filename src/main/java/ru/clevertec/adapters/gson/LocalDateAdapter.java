@@ -1,4 +1,4 @@
-package ru.clevertec;
+package ru.clevertec.adapters.gson;
 
 import com.google.gson.JsonDeserializationContext;
 import com.google.gson.JsonDeserializer;
@@ -8,7 +8,7 @@ import com.google.gson.JsonParseException;
 import java.lang.reflect.Type;
 import java.time.LocalDate;
 
-class LocalDateAdapter implements JsonDeserializer<LocalDate> {
+public class LocalDateAdapter implements JsonDeserializer<LocalDate> {
 
     @Override
     public LocalDate deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {

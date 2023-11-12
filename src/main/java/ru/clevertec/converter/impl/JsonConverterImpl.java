@@ -1,29 +1,34 @@
-package ru.clevertec;
+package ru.clevertec.converter.impl;
 
 import lombok.extern.slf4j.Slf4j;
+import ru.clevertec.converter.JsonConverter;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Slf4j
-public class JsonConverter {
+public class JsonConverterImpl implements JsonConverter {
 
     private String json = null;
 
     /**
-     * Определение имён полей и получение объекта поля из входящих параметров.
+     * Определение имён полей и получение поля объекта из входящих параметров.
      *
      * @param object
      * @return строка
      */
+
+    @Override
     public String toJson(Object object) {
         StringBuilder json = new StringBuilder();
         json.append("{");
@@ -33,19 +38,29 @@ public class JsonConverter {
             fields[i].setAccessible(true);
             String fieldName = fields[i].getName();
             Object fieldValue;
+            Object fieldType;
+
             try {
                 fieldValue = fields[i].get(object);
+                fieldType = fields[i].getType();
+
+                if (fieldType == OffsetDateTime.class) {
+                    OffsetDateTime dateTime = (OffsetDateTime) fieldValue;
+                    fieldValue = dateTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss" +
+                            ".SSSSSSSXXX"));
+                }
             } catch (IllegalAccessException e) {
                 fieldValue = null;
             }
             json.append("\"").append(fieldName).append("\":");
             json.append(toJsonFieldValue(fieldValue));
+
             if (i < fields.length - 1) {
                 json.append(",");
             }
         }
-
         json.append("}");
+
         return json.toString();
     }
 
@@ -64,11 +79,9 @@ public class JsonConverter {
             return "\"" + fieldValue + "\"";
         } else if (fieldValue instanceof Number || fieldValue instanceof Boolean) {
             return fieldValue.toString();
-        } else if (fieldValue instanceof List<?>) {
+        } else if (fieldValue instanceof Collection<?>) {
             return listToJson((List<?>) fieldValue);
-        } /*else if (fieldValue instanceof HashMap<?, ?>) {
-            return hashMapToJson((HashMap<String, Integer>) fieldValue);
-        }*/ else {
+        } else {
             return toJson(fieldValue);
         }
     }
@@ -95,47 +108,21 @@ public class JsonConverter {
         return json.toString();
     }
 
-    private String hashMapToJson(HashMap<String, Integer> map) {
-        StringBuilder json = new StringBuilder();
-        json.append("[");
-        Iterator<? extends Map.Entry<?, ?>> iterator = map.entrySet().iterator();
 
-        while (iterator.hasNext()) {
-            Map.Entry<String, Integer> entry = (Map.Entry<String, Integer>) iterator.next();
-            String key = entry.getKey();
-            Integer value = entry.getValue();
-            json.append(key);
-            json.append(":");
-            json.append(toJsonFieldValue(value));
-
-            if (iterator.hasNext()) {
-                json.append(",");
-            }
-//            System.out.println("Key: " + key + ", Value: " + value);
-
-        }
-        json.append("]");
-
-        return json.toString();
-    }
-
-//----------------------------------//
-
-    private Map<String, Object> parseJson(String jsonString) {
+    private Map<String, Object> parseJson(String jsonString) throws IllegalArgumentException {
         Map<String, Object> result = new LinkedHashMap<>();
         json = jsonString;
 
-        // Удаление пробелов из строки JSON
         json = json.replaceAll("\\s", "");
 
         if (json.startsWith("{")) {
-            json = json.substring(1); // Удаление "{"
+            json = json.substring(1);
         } else {
-            throw new IllegalArgumentException("Некорректный формат JSON");
-
+            throw new IllegalArgumentException("Invalid format JSON!");
         }
 
         while (!json.isEmpty()) {
+
             // При окончании json
             if (json.startsWith("}") && json.length() >= 2) {
                 json = json.substring(1);
@@ -145,10 +132,11 @@ public class JsonConverter {
                 return result;
             }
 
-            String keyValueStr = null;
+            String keyValueStr;
 
             // Выбор части строки до ","
             int commaIndex = json.indexOf(",");
+
             if (commaIndex != -1) {
                 keyValueStr = json.substring(0, commaIndex);
             } else {
@@ -158,15 +146,23 @@ public class JsonConverter {
             // Разделение элементов JSON по ":"
             String[] keyValue = new String[2];
             keyValue[0] = keyValueStr.substring(0, keyValueStr.indexOf(":"));
+            boolean reg = Pattern.matches("^\"[^\"]+\"$", keyValue[0]);
+
+            if (!reg) {
+
+                try {
+                    throw new IllegalArgumentException("Invalid format JSON!");
+                } catch (IllegalArgumentException e) {
+                    log.info(e.getMessage() + " - " + keyValue[0]);
+                }
+            }
             keyValue[1] = keyValueStr.substring(keyValueStr.indexOf(":") + 1);
 
-            // Удаление " " " из key
             String key = keyValue[0].replaceAll("\"", "");
             String value = keyValue[1];
 
             if (value.startsWith("{")) {
 
-                // Удаляем JSON до "{"
                 int i = json.indexOf("{");
                 json = json.substring(i);
 
@@ -174,42 +170,43 @@ public class JsonConverter {
                 result.put(key, parseJson(json));
             } else if (value.startsWith("[")) {
 
-                // Удаляем JSON до "["
                 int i = json.indexOf("[");
                 json = json.substring(i);
 
                 String substring = json.substring(json.indexOf("["), json.indexOf(","));
 
                 if (substring.contains(":")) {
+
                     // Массив Objects
-                    result.put(key, parseObjectToList(json));
-                } else result.put(key, parsePrimitiveToList(json));
+                    result.put(key, parseObjectToList());
+                } else {
+                    result.put(key, parsePrimitiveToList());
+                }
 
                 if (json.startsWith("}")) {
                     json = json.substring(1);
+
                     return result;
 
                 } else if (json.startsWith(",")) {
                     json = json.substring(1);
                 }
 
-                // Если содержится "}", выбираем значения до него.
             } else if (value.contains("}")) {
                 String v = value.substring(0, value.indexOf("}"));
                 result.put(key, parseValue(v));
 
-                // Удаляем значенияе и "}"
                 json = json.substring(json.indexOf("}") + 1);
 
-                if (json.startsWith(",")) { // Если первая "," то, удаляем её.
+                if (json.startsWith(",")) {
                     json = json.substring(1);
                 }
+
                 return result;
+
             } else {
                 // Простое значение
                 result.put(key, parseValue(value));
-
-                // Удаляем JSON по ","
                 json = json.substring(commaIndex + 1);
             }
         }
@@ -229,11 +226,9 @@ public class JsonConverter {
         }
     }
 
-    private List<Object> parsePrimitiveToList(String jsonString) {
+    private List<Object> parsePrimitiveToList() {
 
         List<Object> stringList = new ArrayList<>();
-        json = jsonString;
-        // Обрезаем первую "["
         json = json.substring(1);
 
         if (json.startsWith("]")) {
@@ -242,7 +237,7 @@ public class JsonConverter {
 
         while (!json.startsWith("}")) {
 
-            // Если это строки
+            // Если содержатся строки
             if (json.substring(0, json.indexOf("]")).contains("\"")) {
                 String value = json.substring(0, json.indexOf("\"", 1));
                 stringList.add(value);
@@ -269,10 +264,9 @@ public class JsonConverter {
         return stringList;
     }
 
-    private List<Map<String, Object>> parseObjectToList(String jsonString) {
+    private List<Map<String, Object>> parseObjectToList() {
 
         List<Map<String, Object>> stringList = new ArrayList<>();
-        json = jsonString;
 
         // Обрезаем первую "["
         json = json.substring(1);
@@ -297,15 +291,26 @@ public class JsonConverter {
         return str;
     }
 
-    public <T> T jsonToObject(String json, Class<T> typeClass) throws Exception {
+    @Override
+    public <T> T jsonToObject(String json, Class<T> typeClass) {
 
         Map<String, Object> jsonMap = parseJson(json);
-        return createObject(jsonMap, typeClass);
+        try {
+            return createObject(jsonMap, typeClass);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    private <T> T createObject(Map<String, Object> jsonMap, Class<T> typeClass) throws Exception {
+    private <T> T createObject(Map<String, Object> jsonMap, Class<T> typeClass) {
 
-        T myObject = typeClass.getDeclaredConstructor().newInstance();
+        T myObject;
+        try {
+            myObject = typeClass.getDeclaredConstructor().newInstance();
+        } catch (InstantiationException | IllegalAccessException | InvocationTargetException |
+                 NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
 
         Field[] fields = typeClass.getDeclaredFields();
 
@@ -313,45 +318,43 @@ public class JsonConverter {
             field.setAccessible(true);
             String fieldName = field.getName();
             Class<?> fieldType = field.getType();
-            log.info(String.valueOf(fieldType));
 
             if (jsonMap.containsKey(fieldName)) {
                 Object fieldValue = jsonMap.get(fieldName);
 
                 String str = removingQuotesAndToString(fieldValue);
 
-                if (fieldType == UUID.class) {
-                    field.set(myObject, UUID.fromString(str));
-                    continue;
-                }
+                try {
+                    if (fieldType == UUID.class) {
+                        field.set(myObject, UUID.fromString(str));
+                        continue;
+                    }
 
-                if (fieldType == LocalDate.class) {
-                    field.set(myObject, LocalDate.parse(str));
-                    continue;
-                }
+                    if (fieldType == LocalDate.class) {
+                        field.set(myObject, LocalDate.parse(str));
+                        continue;
+                    }
 
-                if (fieldType == String.class) {
-                    field.set(myObject, str);
-                    continue;
-                }
+                    if (fieldType == String.class) {
+                        field.set(myObject, str);
+                        continue;
+                    }
 
-                if (fieldType == OffsetDateTime.class) {
-                    field.set(myObject, OffsetDateTime.parse(str));
-                    continue;
-                }
+                    if (fieldType == OffsetDateTime.class) {
+                        field.set(myObject, OffsetDateTime.parse(str));
+                        continue;
+                    }
 
-               /* if (fieldValue instanceof Map) {
-                    // Рекурсивное создание вложенного объекта
-                    fieldValue = createObject((Map<String, Object>) fieldValue, field.getType());
-                } else*/ if (fieldValue instanceof List) {
-                    // Рекурсивное создание списка объектов
-                    fieldValue = createList((List<Object>) fieldValue, getGenericType(field));
-                    field.set(myObject, fieldValue);
-                }
+                    if (fieldValue instanceof List) {
+                        fieldValue = createList((List<Object>) fieldValue, getGenericType(field));
+                        field.set(myObject, fieldValue);
+                    }
 
-                if (fieldType == Double.class) {
-                    log.info(myObject.toString());
-                    field.set(myObject, Double.valueOf(fieldValue.toString()));
+                    if (fieldType == Double.class) {
+                        field.set(myObject, Double.valueOf(fieldValue.toString()));
+                    }
+                } catch (IllegalAccessException e) {
+                    throw new RuntimeException(e);
                 }
             }
         }
@@ -364,13 +367,12 @@ public class JsonConverter {
         return (Class<?>) ((java.lang.reflect.ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
     }
 
-    private <T> List<T> createList(List<Object> list, Class<T> elementType) throws Exception {
+    private <T> List<T> createList(List<Object> list, Class<T> elementType) {
         List<T> resultList = new ArrayList<>();
 
         for (Object item : list) {
 
             if (item instanceof Map) {
-                // Рекурсивное создание объекта из элемента списка
                 T element = createObject((Map<String, Object>) item, elementType);
                 resultList.add(element);
             }

@@ -16,5 +16,4 @@ public class MyTipe {
     private String name;
     private Integer age;
     private List<Integer> list;
-//    private HashMap<String,Integer> map;
 }
